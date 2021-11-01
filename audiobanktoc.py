@@ -4,8 +4,13 @@ import sys
 import string
 import random
 import math
+import pathlib
 
-def audiobanktoc(abdata, bankinfo, cfile, hfile):
+# Variable prefix in C file and in header, can change these or set to ''
+c_pfx = 'const '
+h_pfx = 'extern const '
+
+def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
     # Counts
     numInstruments = len(bankinfo['instruments'])
     numDrums = len(bankinfo['drums'])
@@ -19,6 +24,9 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile):
     inst_tuning_fields = ['low_tuning', 'normal_tuning', 'high_tuning']
     drum_fields = ['releaseRate', 'pan', 'loaded', 'sample', 'tuning', 'envelope']
     sfx_fields = ['sample', 'tuning']
+    sample_fields = ['len', 'sampleAddr', 'loop', 'book']
+    loop_fields = ['start', 'end', 'count', 'origSpls']
+    book_fields = ['order', 'npredictors']
     
     # Data structures
     inst_list = [] # The instrument list data structure addresses (includes NULLs and duplicates)
@@ -26,9 +34,10 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile):
     drum_list = [] # The drum list data structure addresses (includes NULLs and duplicates)
     drums = [] # Actual drum data
     sfxes = []
-    all_samples = [] # All sample addresses referenced
-    all_envelopes = [] # All envelope addresses referenced
+    samples = [] # Sample addresses referenced, then sample dicts
+    envelopes = [] # Envelope addresses referenced, then envelope dicts
     all_names = []
+    all_loop_book_addrs = []
     
     # Helper functions
     def get_ptr(a):
@@ -46,19 +55,58 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile):
         all_names.append(name)
     def get_rand_name():
         return ''.join(random.choice(string.ascii_lowercase) for i in range(10))
-    def validate_and_add_sample(addr, name):
-        if addr >= len(abdata):
+    def validate_and_add_sample(addr, name, required):
+        if addr >= len(abdata) or (addr & 3) != 0:
             raise RuntimeError(name + ' invalid sample pointer: ' + hex(inst[f]))
-        if addr != 0 and addr not in all_samples:
-            all_samples.append(addr)
+        if addr == 0 and required:
+            raise RuntimeError('Sample pointer is required in ' + name + ' but it is NULL')
+        if addr != 0 and addr not in samples:
+            samples.append(addr)
     def validate_tuning(f, name):
         if not math.isfinite(f) or f > 1000.0 or f < 0.001:
             raise RuntimeError(name + ' invalid tuning: ' + f)
     def validate_and_add_env(addr, name):
-        if addr >= len(abdata):
+        if addr >= len(abdata) or (addr & 3) != 0:
             raise RuntimeError(name + ' invalid envelope pointer: ' + hex(inst[f]))
-        if addr != 0 and addr not in all_envelopes:
-            all_samples.append(addr)
+        if addr != 0 and addr not in envelopes:
+            samples.append(addr)
+    def get_env_uses(addr):
+        ret = []
+        for inst in instruments:
+            if inst['envelope'] == addr:
+                ret.append(inst['name'])
+        for drum in drums:
+            if drum['envelope'] == addr:
+                ret.append(drum['name'])
+        assert len(ret) >= 1
+        return ret
+    def get_sample_uses(addr):
+        ret = []
+        for inst in instruments:
+            if any(inst[s] == addr for s in inst_sample_fields):
+                ret.append(inst['name'])
+        for drum in drums:
+            if drum['sample'] == addr:
+                ret.append(drum['name'])
+        for sfx in sfxes:
+            if sfx['sample'] == addr:
+                ret.append(sfx['name'])
+        assert len(ret) >= 1
+        return ret
+    def validate_book_loop_addr(addr):
+        if addr >= len(abdata) or (addr & 3) != 0:
+            raise RuntimeError('Invalid AdpcmLoop/AdpcmBook pointer ' + hex(addr))
+        if addr in all_loop_book_addrs:
+            raise RuntimeError('Duplicate AdpcmLoop/AdpcmBook pointer ' + hex(addr))
+        all_loop_book_addrs.append(addr)
+    def addr2name(l, addr):
+        return next(x['name'] for x in l if x['addr'] == addr)['name']
+    def get_sample_name(addr):
+        if addr == 0:
+            return None
+        return addr2name(samples, addr)
+    def get_envelope_name(addr):
+        return addr2name(envelopes, addr)
     
     # Top level parse
     drumlistaddr = get_ptr(0)
@@ -100,7 +148,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile):
         assert inst['normalRangeHi'] == 0 or inst['normalRangeLo'] < inst['normalRangeHi']
         validate_and_add_env(inst['envelope'], 'Inst ' + str(i))
         for f in inst_sample_fields:
-            validate_and_add_sample(inst[f], 'Inst ' + str(i) + ' ' + f)
+            validate_and_add_sample(inst[f], 'Inst ' + str(i) + ' ' + f, f == 'normal_sample')
         for f in inst_tuning_fields:
             validate_tuning(inst[f], 'Inst ' + str(i) + ' ' + f)
         # Add data
@@ -130,7 +178,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile):
         # Validate data
         assert drum['loaded'] == 0
         assert drum['pan'] <= 128
-        validate_and_add_sample(drum['sample'], 'Drum ' + str(i))
+        validate_and_add_sample(drum['sample'], 'Drum ' + str(i), True)
         validate_tuning(drum['tuning'], 'Drum ' + str(i))
         validate_and_add_env(drum['envelope'], 'Drum ' + str(i))
         # Add data
@@ -150,24 +198,94 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile):
         a += 8
         sfx = dict(zip(sfx_fields, values))
         # Validate data
-        validate_and_add_sample(sfx['sample'], 'Sfx ' + str(i))
+        validate_and_add_sample(sfx['sample'], 'Sfx ' + str(i), True)
         validate_tuning(sfx['tuning'], 'Sfx ' + str(i))
         # Add data
         sfx['name'] = sfx_name
         sfxes.append(sfx)
     
-    TODO
-        
-    '''
-    if inst_addr == 0:
-        
-        inst_list.append(None)
-    else:
-        
+    # Envelopes
+    for i in range(len(envelopes)):
+        a = envelopes[i]
+        env = {'addr': a,
+            'name': '_'.join(get_env_uses(a)),
+            'points': []}
+        while True:
+            rate, level = struct.unpack('>hH', abdata[a:a+4])
+            a += 4
+            env['points'].append({'rate': rate, 'level': level})
+            if rate < 0:
+                break
+        envelopes[i] = env
     
-    inst = {'name': inst_name, 'loaded': loaded, 'normalRangeLo': normalRangeLo,
-        'normalRangeHi': normalRangeHi, '}
-    '''
+    # Samples
+    for i in range(len(samples)):
+        a = samples[i]
+        values = struct.unpack('>IIII', abdata[a:a+0x10])
+        sample = dict(zip(sample_fields, values))
+        sample['addr'] = a
+        sample['name'] = '_'.join(get_sample_uses(a))
+        validate_book_loop_addr(sample['loop'])
+        validate_book_loop_addr(sample['book'])
+        a = sample['loop']
+        values = struct.unpack('>IIII', abdata[a:a+0x10])
+        a += 0x10
+        loop = dict(zip(loop_fields, values))
+        if loop['count'] != 0:
+            loop['state'] = list(struct.unpack('>8h', abdata[a:a+0x10]))
+        a = sample['book']
+        values = struct.unpack('>II', abdata[a:a+8])
+        a += 8
+        book = dict(zip(book_fields, values))
+        elements = 8 * book['order'] * book['predictors']
+        assert elements < 10000
+        if elements != 0:
+            book['book'] = list(struct.unpack('>' + str(elements) + 'h', abdata[a:a+(2*elements)]))
+        sample['loop'] = loop
+        sample['book'] = book
+    
+    TODO # base names vs full names, 
+    
+    # Replace addresses with names
+    for i in range(len(inst_list)):
+        if inst_list[i] is not None:
+            inst_list[i] = addr2name(instruments, inst_list[i])
+    for i in range(len(drum_list)):
+        if drum_list[i] is not None:
+            drum_list[i] = addr2name(drums, drum_list[i])
+    for inst in instruments:
+        for f in inst_sample_fields:
+            inst[f] = get_sample_name(inst[f])
+        inst['envelope'] = get_envelope_name(inst['envelope'])
+    for drum in drums:
+        drum['sample'] = get_sample_name(drum['sample'])
+        drum['envelope'] = get_envelope_name(drum['envelope'])
+    for sfx in sfxes:
+        sfx['sample'] = get_sample_name(sfx['sample'])
+        
+    # Top-level structs
+    TODO
+    
+    # Write
+    def write_struct(type, name, data):
+        hfile.write(h_pfx + '{} {};\n'.format(type, name))
+        cfile.write(c_pfx + '{} {} = \{\n'.format(type, name))
+        for k in data.keys():
+            v = data[k]
+            if isinstance(v, list):
+                valuestr = '{\n'
+                for q in v:
+                    valuestr += '        ' + hex(q) + ',\n'
+                valuestr += '    }'
+            elif v is None:
+                valuestr = 'NULL'
+                TODO # handle loop and book
+            else:
+                valuestr = hex(v)
+            cfile.write('    .{} = {},\n'.format(k, valuestr))
+        cfile.write('\};\n\n')
+    
+    write_struct('AudioBank', bankname, TODO)
     
 
 def audiobanktoc_files(abpath, bankinfopath, cpath):
@@ -179,7 +297,9 @@ def audiobanktoc_files(abpath, bankinfopath, cpath):
         abdata = abfile.read()
         bankinfo = json.loads(bankinfofile.read())
         assert all(k in bankinfo for k in ['instruments', 'drums', 'sfx'])
-        audiobanktoc(abdata, bankinfo, cfile, hfile)
+        bankname = pathlib.Path(cpath).stem
+        assert bankname.replace('_', '').isalnum()
+        audiobanktoc(abdata, bankinfo, cfile, hfile, bankname)
 
 if __name__ == '__main__':
     try:

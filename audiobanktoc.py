@@ -112,17 +112,16 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         if addr in all_loop_book_addrs:
             raise RuntimeError('Duplicate AdpcmLoop/AdpcmBook pointer ' + hex(addr))
         all_loop_book_addrs.append(addr)
-    def addr2fullname(l, addr):
+    def addr2fullname(l, addr, allowNull=False):
+        if addr == 0:
+            if allowNull:
+                return None
+            else:
+                raise RuntimeError('addr2fullname with addr 0 but NULL not allowed')
         ret = next((x['fullname'] for x in l if x['addr'] == addr), None)
         if ret is None:
             raise RuntimeError('Could not find instrument with addr ' + str(addr))
-    def get_sample_fullname(addr):
-        if addr == 0:
-            return None
-        return addr2fullname(samples, addr)
-    def get_envelope_fullname(addr):
-        return addr2fullname(envelopes, addr)
-    
+        return ret
     # Top level parse
     drumlistaddr = get_ptr(0)
     assert (numDrums == 0) == (drumlistaddr == 0)
@@ -285,18 +284,18 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
     
     # Replace addresses with fullnames
     for i in range(len(inst_list)):
-        inst_list[i] = addr2fullname(instruments, inst_list[i]) if inst_list[i] != 0 else None
+        inst_list[i] = addr2fullname(instruments, inst_list[i], True)
     for i in range(len(drum_list)):
-        drum_list[i] = addr2fullname(drums, drum_list[i]) if drum_list[i] != 0 else None
+        drum_list[i] = addr2fullname(drums, drum_list[i])
     for inst in instruments:
         for f in inst_sample_fields:
-            inst[f] = get_sample_fullname(inst[f])
-        inst['envelope'] = get_envelope_fullname(inst['envelope'])
+            inst[f] = addr2fullname(samples, inst[f], f != 'normal_sample')
+        inst['envelope'] = addr2fullname(envelopes, inst['envelope'])
     for drum in drums:
-        drum['sample'] = get_sample_fullname(drum['sample'])
-        drum['envelope'] = get_envelope_fullname(drum['envelope'])
+        drum['sample'] = addr2fullname(samples, drum['sample'])
+        drum['envelope'] = addr2fullname(envelopes, drum['envelope'])
     for sfx in sfxes:
-        sfx['sample'] = get_sample_fullname(sfx['sample'])
+        sfx['sample'] = addr2fullname(samples, sfx['sample'])
         
     # Top-level struct
     bank = {'drums': bankname + '_DrumList' if numDrums > 0 else None,
@@ -311,17 +310,17 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
                 if k in ['addr', 'basename', 'fullname']:
                     continue
                 v = data[k]
-                cfile.write('    ' * tabs + '.{} = '.format(k))
+                cfile.write('    ' * (tabs+1) + '.{} = '.format(k))
                 write_field(v, tabs+1)
                 cfile.write(',\n')
-            cfile.write('}')
+            cfile.write('    ' * tabs + '}')
         elif isinstance(data, list):
             cfile.write('{\n')
             for v in data:
-                cfile.write('    ' * tabs)
+                cfile.write('    ' * (tabs+1))
                 write_field(v, tabs+1)
                 cfile.write(',\n')
-            cfile.write('}')
+            cfile.write('    ' * tabs + '}')
         elif isinstance(data, str):
             cfile.write(data)
         elif isinstance(data, int):

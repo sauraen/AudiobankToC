@@ -7,8 +7,11 @@ import math
 import pathlib
 
 # Variable prefix in C file and in header, can change these or set to ''
-c_pfx = 'const '
-h_pfx = 'extern const '
+c_pfx = ''
+h_pfx = 'extern '
+# Include files in C file and in header
+c_includes = ''
+h_includes = '#include "audiobank.h"\n'
 
 def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
     # Counts
@@ -21,6 +24,8 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         'envelope', 'low_sample', 'low_tuning', 'normal_sample', 'normal_tuning',
         'high_sample', 'high_tuning']
     inst_sample_fields = ['low_sample', 'normal_sample', 'high_sample']
+    split_names = ['Low', 'Norm', 'High']
+    split_names_lower = ['low', 'normal', 'high']
     inst_tuning_fields = ['low_tuning', 'normal_tuning', 'high_tuning']
     drum_fields = ['releaseRate', 'pan', 'loaded', 'sample', 'tuning', 'envelope']
     sfx_fields = ['sample', 'tuning']
@@ -90,7 +95,15 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         ret = []
         for inst in instruments:
             if any(inst[s] == addr for s in inst_sample_fields):
-                ret.append(inst['basename'])
+                if inst['low_sample'] == 0 and inst['high_sample'] == 0:
+                    ret.append(inst['basename'])
+                else:
+                    ranges = ''
+                    for f, n in zip(inst_sample_fields, split_names):
+                        if inst[f] == addr:
+                            ranges += n
+                    assert ranges != ''
+                    ret.append(inst['basename'] + '_' + ranges)
         for drum in drums:
             if drum['sample'] == addr:
                 ret.append(drum['basename'])
@@ -260,7 +273,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         a += 0x10
         loop = dict(zip(loop_fields, values))
         if loop['count'] != 0:
-            loop['state'] = list(struct.unpack('>8h', abdata[a:a+0x10]))
+            loop['state'] = list(struct.unpack('>16h', abdata[a:a+0x20]))
         loop['fullname'] = sample_name + '_Loop'
         loops.append(loop)
         # print('Loop ' + str(i) + ': ' + str(loop))
@@ -296,7 +309,23 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         drum['envelope'] = addr2fullname(envelopes, drum['envelope'])
     for sfx in sfxes:
         sfx['sample'] = addr2fullname(samples, sfx['sample'])
-        
+    
+    # Convert sounds to sub-structs
+    for inst in instruments:
+        for i in range(3):
+            split = split_names_lower[i]
+            inst[split + 'NotesSound'] = {
+                'sample': inst[split + '_sample'],
+                'tuning': inst[split + '_tuning']}
+            del inst[split + '_sample']
+            del inst[split + '_tuning']
+    for drum in drums:
+        drum['sound'] = {
+            'sample': drum['sample'],
+            'tuning': drum['tuning']}
+        del drum['sample']
+        del drum['tuning']
+    
     # Top-level struct
     bank = {'drums': bankname + '_DrumList' if numDrums > 0 else None,
         'sfx': bankname + '_SfxList' if numSfx > 0 else None,
@@ -311,18 +340,21 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
                     continue
                 v = data[k]
                 cfile.write('    ' * (tabs+1) + '.{} = '.format(k))
+                if k == 'sampleAddr':
+                    cfile.write('(u8*)')
                 write_field(v, tabs+1)
                 cfile.write(',\n')
             cfile.write('    ' * tabs + '}')
         elif isinstance(data, list):
             cfile.write('{\n')
-            for v in data:
-                cfile.write('    ' * (tabs+1))
+            for i, v in enumerate(data):
+                if not isinstance(v, int) or (i & 7) == 0:
+                    cfile.write('    ' * (tabs+1))
                 write_field(v, tabs+1)
-                cfile.write(',\n')
+                cfile.write(', ' if isinstance(v, int) and (i & 7) != 7 else ',\n')
             cfile.write('    ' * tabs + '}')
         elif isinstance(data, str):
-            cfile.write(data)
+            cfile.write('&' + data)
         elif isinstance(data, int):
             cfile.write(hex(data))
         elif isinstance(data, float):
@@ -331,32 +363,33 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
             cfile.write('NULL')
         else:
             raise RuntimeError('Unhandled write_field type ' + str(data))
-    def write_struct(type, name, data):
+    def write_struct(type, name, data, in_header = False):
         brackets = ''
         if isinstance(data, list):
             brackets = '[' + str(len(data)) + ']'
-        hfile.write(h_pfx + '{} {}{};\n'.format(type, name, brackets))
+        if in_header:
+            hfile.write(h_pfx + '{} {}{};\n'.format(type, name, brackets))
         cfile.write(c_pfx + '{} {}{} = \n'.format(type, name, brackets))
         write_field(data, 0)
         cfile.write(';\n\n')
     
-    write_struct('AudioBank', bankname, bank)
-    if numDrums > 0:
-        write_struct('Drum*', bankname + '_DrumList', drum_list)
-    if numSfx > 0:
-        write_struct('AudioBankSound', bankname + '_SfxList', sfxes)
-    for inst in instruments:
-        write_struct('Instrument', inst['fullname'], inst)
-    for drum in drums:
-        write_struct('Drum', drum['fullname'], drum)
+    hfile.write(h_includes + '\n')
+    cfile.write(c_includes + '\n#include "{}.h"\n\n'.format(bankname))
+    write_struct('AudioBank', bankname, bank, True)
+    for sample, book, loop in zip(samples, books, loops):
+        write_struct('AudioBankSample', sample['fullname'], sample)
+        write_struct('AdpcmBook', book['fullname'], book, True)
+        write_struct('AdpcmLoop', loop['fullname'], loop, True)
     for env in envelopes:
         write_struct('AdsrEnvelopePoint', env['fullname'], env['points'])
-    for sample in samples:
-        write_struct('AudioBankSample', sample['fullname'], sample)
-    for loop in loops:
-        write_struct('AdpcmLoop', loop['fullname'], loop)
-    for book in books:
-        write_struct('AdpcmBook', book['fullname'], book)
+    for inst in instruments:
+        write_struct('Instrument', inst['fullname'], inst, True)
+    for drum in drums:
+        write_struct('Drum', drum['fullname'], drum)
+    if numDrums > 0:
+        write_struct('Drum*', bankname + '_DrumList', drum_list, True)
+    if numSfx > 0:
+        write_struct('AudioBankSound', bankname + '_SfxList', sfxes)
     
 
 def audiobanktoc_files(abpath, bankinfopath, cpath):
@@ -379,10 +412,6 @@ if __name__ == '__main__':
         cpath = sys.argv[3]
     except IndexError as e:
         print('Usage: python3 audiobanktoc.py path/to/audiobank.bin path/to/bankinfo.json path/to/output.c')
-        print('bankinfo.json should look like:')
-        print('{"instruments": ["Strings", None, "Piano"],')
-        print(' "drums": ["BassDrum", "BassDrum", "BassDrum"],')
-        print(' "sfx": []')
-        print('}')
+        print('Use makedummyjson.py to create a dummy json for your bank, then edit the names before running audiobanktoc.py')
         sys.exit(-1)
     audiobanktoc_files(abpath, bankinfopath, cpath)

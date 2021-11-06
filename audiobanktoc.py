@@ -242,6 +242,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         # print('Sfx ' + str(i) + ': ' + str(sfx))
     
     # Envelopes
+    envelopes.sort() # Actually in MIDI channel order (perc = 9)
     for i in range(len(envelopes)):
         a = envelopes[i]
         env_name = uses_to_name(get_env_uses(a))
@@ -258,6 +259,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         # print('Env ' + str(i) + ': ' + str(env))
     
     # Samples
+    samples.sort() # Actually in MIDI channel order (perc = 9)
     for i in range(len(samples)):
         a = samples[i]
         values = struct.unpack('>IIII', abdata[a:a+0x10])

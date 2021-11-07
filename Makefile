@@ -14,7 +14,7 @@ OC = mips64-objcopy
 
 CCFLAGS := -mips3 -mabi=32 -mtune=vr4300 -mfix4300 -mno-gpopt -fomit-frame-pointer \
 	-mno-check-zero-division -mno-explicit-relocs -mno-memcpy \
-	-fno-toplevel-reorder -fno-reorder-blocks -fno-builtin \
+	-fno-toplevel-reorder -fno-reorder-blocks -fno-zero-initialized-in-bss -fno-builtin \
 	--std=gnu99 -Wall -Werror -Wno-main \
 	-Wbuiltin-declaration-mismatch -Wbuiltin-macro-redefined \
 	-Wno-incompatible-pointer-types -Wno-missing-braces \

@@ -133,20 +133,25 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         if ret is None:
             raise RuntimeError('Could not find item with addr ' + str(addr))
         return ret
+    
     # Top level parse
     drumlistaddr = get_ptr(0)
     assert (numDrums == 0) == (drumlistaddr == 0)
     sfxlistaddr = get_ptr(4)
     assert (numSfx == 0) == (sfxlistaddr == 0)
+    lastaddr = 0
+    
     a = 8
     for i in range(numInstruments):
         inst_list.append(get_ptr(a))
         a += 4
+    lastaddr = a
     if numDrums > 0:
         a = drumlistaddr
         for i in range(numDrums):
             drum_list.append(get_ptr(a))
             a += 4
+        lastaddr = max(lastaddr, a)
     
     # Instruments parse
     for i, inst_addr in enumerate(inst_list):
@@ -186,6 +191,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         inst['fullname'] = inst_name + '_Inst'
         instruments.append(inst)
         # print('Inst ' + str(i) + ': ' + str(inst))
+        lastaddr = max(lastaddr, inst_addr+0x20)
     instruments.sort(key=lambda x: x['addr'])
     
     # Drums parse
@@ -219,6 +225,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         drum['fullname'] = drum_name + '_Drum'
         drums.append(drum)
         # print('Drum ' + str(i) + ': ' + str(drum))
+        lastaddr = max(lastaddr, drum_addr+0x20)
     drums.sort(key=lambda x: x['addr'])
     
     # SFX parse
@@ -240,9 +247,11 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         sfx['fullname'] = sfx_name + '_Sfx'
         sfxes.append(sfx)
         # print('Sfx ' + str(i) + ': ' + str(sfx))
+    lastaddr = max(lastaddr, a)
     
     # Envelopes
     def read_envelope(a, env_name):
+        nonlocal lastaddr
         env = {'addr': a,
             'fullname': env_name + '_Env',
             'points': []}
@@ -258,6 +267,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
                 done = True
             if done and (len(env['points']) & 3) == 0:
                 break
+        lastaddr = max(lastaddr, a)
         return env
     envelopes.sort() # Actually in MIDI channel order (perc = 9)
     for i in range(len(envelopes)):
@@ -280,6 +290,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         validate_and_add(sample['loop'], sample_name + ' loop', loops)
         validate_and_add(sample['book'], sample_name + ' book', books)
         samples[i] = sample
+        lastaddr = max(lastaddr, a+0x10)
     
     loops.sort()
     for i in range(len(loops)):
@@ -291,8 +302,10 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         a += 0x10
         if loop['count'] != 0:
             loop['state'] = list(struct.unpack('>16h', abdata[a:a+0x20]))
+            a += 0x20
         loop['fullname'] = loop_name + '_Loop'
         loops[i] = loop
+        lastaddr = max(lastaddr, a)
         
     books.sort()
     for i in range(len(books)):
@@ -306,8 +319,10 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         assert elements < 10000
         if elements != 0:
             book['book'] = list(struct.unpack('>' + str(elements) + 'h', abdata[a:a+(2*elements)]))
+            a += 2*elements
         book['fullname'] = book_name + '_Book'
         books[i] = book
+        lastaddr = max(lastaddr, a)
     
     # Unused envelopes
     e = 0
@@ -321,11 +336,17 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         a += 4 * len(envelopes[e]['points'])
         e += 1
     
+    # Padding / unused data at end
+    padlen = len(abdata) - lastaddr
+    if padlen > 0:
+        print(hex(padlen) + ' bytes unused/padding data at end')
+        paddata = list(struct.unpack('>' + str(padlen) + 'B', abdata[lastaddr:]))
+    
     # Replace addresses with fullnames
     for i in range(len(inst_list)):
         inst_list[i] = addr2fullname(instruments, inst_list[i], True)
     for i in range(len(drum_list)):
-        drum_list[i] = addr2fullname(drums, drum_list[i])
+        drum_list[i] = addr2fullname(drums, drum_list[i], True)
     for inst in instruments:
         for f in inst_sample_fields:
             inst[f] = addr2fullname(samples, inst[f], f != 'normal_sample')
@@ -392,18 +413,23 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
             cfile.write('NULL')
         else:
             raise RuntimeError('Unhandled write_field type ' + str(data))
-    def write_struct(type, name, data, in_header = False):
+    def write_struct(type, name, data, in_header = False, write_align = False):
         brackets = ''
         if isinstance(data, list):
             brackets = '[' + str(len(data)) + ']'
+        elif 'addr' in data:
+            cfile.write('/* ' + hex(data['addr']) + ' */\n')
         if in_header:
             hfile.write(h_pfx + '{} {}{};\n'.format(type, name, brackets))
-        cfile.write(c_pfx + '{} {}{} = \n'.format(type, name, brackets))
+        cfile.write(c_pfx + '{} {}{} '.format(type, name, brackets))
+        if write_align:
+            cfile.write('__attribute__((aligned(16))) ')
+        cfile.write('= \n')
         write_field(data, 0)
         cfile.write(';\n\n')
     
     hfile.write(h_includes + '\n')
-    cfile.write(c_includes + '\n#include "{}.h"\n\n'.format(bankname))
+    cfile.write(c_includes + '\n#include "{}.h"\n\n/* 0x0 */\n'.format(bankname))
     write_struct('AudioBank', bankname, bank, True)
     written_books = []
     written_loops = []
@@ -424,9 +450,14 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
     for drum in drums:
         write_struct('Drum', drum['fullname'], drum)
     if numDrums > 0:
-        write_struct('Drum*', bankname + '_DrumList', drum_list, True)
+        cfile.write('/* ' + hex(drumlistaddr) + '*/\n')
+        write_struct('Drum*', bankname + '_DrumList', drum_list, True, True)
     if numSfx > 0:
-        write_struct('AudioBankSound', bankname + '_SfxList', sfxes, True)
+        cfile.write('/* ' + hex(sfxlistaddr) + '*/\n')
+        write_struct('AudioBankSound', bankname + '_SfxList', sfxes, True, True)
+    if padlen > 0:
+        cfile.write('/* ' + hex(lastaddr) + '*/\n')
+        write_struct('u8', 'unused', paddata)
     
 
 def audiobanktoc_files(abpath, bankinfopath, cpath):

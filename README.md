@@ -4,8 +4,13 @@ Scripts for converting between N64 Audiobank bank files and C code.
 Does not contain any Gigaleak code or info; based only on pre-Gigaleak
 documentation, decomp, and manual examination of bank file binaries.
 
-Matches on binary -> C -> binary for the OoT master bank (SFX bank) and Main
-Orchestra. Not tested otherwise yet.
+Matches on binary -> C -> binary for the following banks in OoT:
+1. 0x00 - Master
+1. 0x01 - Actor
+1. 0x02 - Nature (kankyo)
+1. 0x03 - Main Orchestra
+
+Not tested otherwise yet.
 
 # Use
 
@@ -28,8 +33,8 @@ This will write the C file and the header (`YourBank.h`) next to the C file.
 
 The Audiobank C file can be compiled back into binary with the appropriate
 header and linker script. The provided `Makefile` is a working example of how
-to do this. Most of the C flags are not critical, except for `-mabi=32` and
-`-fno-toplevel-reorder`. 
+to do this. Most of the C flags are not critical, except for `-mabi=32`,
+`-fno-toplevel-reorder`, and `-fno-zero-initialized-in-bss`.
 
 You must use `include/audiobank.h` when building, not `include/z64audio.h` from
 the decomp. The actual structs are slightly different, plus they have

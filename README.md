@@ -16,12 +16,13 @@ Not tested otherwise yet.
 
 ### Audiobank to C
 
-If you do not already have a `YourBank.json` file, you can generate one by
-running `makedummyjson.py`, given the number of instruments, drums, and SFX in
-the bank. You can get this info from SEQ64 V1.5 or the semi-working Jared
-Johnson zzrtl scripts. Once you have the dummy json, edit it in a text editor
-to set the names of the instruments, drums and SFX. This is not strictly needed
-(the dummy names will work), but it will make editing much easier.
+If you do not already have a `YourBank.json` file (some are available in the
+`json` folder), you can generate one by running `makedummyjson.py`, given the
+number of instruments, drums, and SFX in the bank. You can get this info from
+SEQ64 V1.5 or the semi-working Jared Johnson zzrtl scripts. Once you have the
+dummy json, edit it in a text editor to set the names of the instruments, drums,
+and SFX. This is not strictly needed (the dummy names will work), but it will
+make editing much easier.
 
 When the json file is ready, run
 ```

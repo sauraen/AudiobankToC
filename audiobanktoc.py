@@ -29,7 +29,7 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
     inst_tuning_fields = ['low_tuning', 'normal_tuning', 'high_tuning']
     drum_fields = ['releaseRate', 'pan', 'loaded', 'sample', 'tuning', 'envelope']
     sfx_fields = ['sample', 'tuning']
-    sample_fields = ['len', 'sampleAddr', 'loop', 'book']
+    sample_fields = ['size', 'sampleAddr', 'loop', 'book']
     loop_fields = ['start', 'end', 'count', 'origSpls']
     book_fields = ['order', 'npredictors']
     
@@ -284,6 +284,16 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
         sample_name = uses_to_name(get_sample_uses(a))
         values = struct.unpack('>IIII', abdata[a:a+0x10])
         sample = dict(zip(sample_fields, values))
+        sample2 = {'codec': sample['size'] >> 28,
+            'medium': (sample['size'] >> 26) & 3,
+            'unk_bit26': (sample['size'] >> 25) & 1,
+            'unk_bit25': (sample['size'] >> 24) & 1,
+            'size': sample['size'] & 0xFFFFFF,
+            'sampleAddr': sample['sampleAddr'],
+            'loop': sample['loop'],
+            'book': sample['book']
+        }
+        sample = sample2
         sample['addr'] = a
         sample['basename'] = sample_name
         sample['fullname'] = sample_name + '_Sample'

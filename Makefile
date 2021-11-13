@@ -17,7 +17,6 @@ CCFLAGS := -mips3 -mabi=32 -mtune=vr4300 -mfix4300 -mno-gpopt -fomit-frame-point
 	-fno-toplevel-reorder -fno-reorder-blocks -fno-zero-initialized-in-bss -fno-builtin \
 	--std=gnu99 -Wall -Werror -Wno-main \
 	-Wbuiltin-declaration-mismatch -Wbuiltin-macro-redefined \
-	-Wno-incompatible-pointer-types -Wno-missing-braces \
 	-G 0 -Os -I $(AB2C_DIR)/include
 LDFLAGS := --emit-relocs -T $(AB2C_DIR)/audiobank.ld
 OCFLAGS := -R .MIPS.abiflags -O binary

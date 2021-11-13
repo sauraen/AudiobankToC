@@ -414,7 +414,9 @@ def audiobanktoc(abdata, bankinfo, cfile, hfile, bankname):
                 cfile.write(', ' if isinstance(v, int) and (i & 7) != 7 else ',\n')
             cfile.write('    ' * tabs + '}')
         elif isinstance(data, str):
-            cfile.write('&' + data)
+            if not any(data.endswith(x) for x in {'_Env', '_DrumList', '_SfxList'}):
+                cfile.write('&')
+            cfile.write(data)
         elif isinstance(data, int):
             cfile.write(hex(data))
         elif isinstance(data, float):

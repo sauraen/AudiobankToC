@@ -3,7 +3,7 @@
 
 default:
 	@echo "This is an example Makefile for building audiobank binaries from C."
-	@echo "Try `make path/to/yourbank.bin` if you have path/to/yourbank.c."
+	@echo "Try 'make path/to/yourbank.bin' if you have path/to/yourbank.c."
 	
 SELF_PATH := $(shell echo "$(MAKEFILE_LIST)" | sed -e "s/.*Makefile //")
 AB2C_DIR := $(dir $(SELF_PATH))
